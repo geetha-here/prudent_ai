@@ -1,0 +1,396 @@
+Task 3 — W-2 Parser & Insight Generator (Gemini)
+
+A small Python component that ingests a W-2 (PDF or image), uses Google’s Gemini to extract key fields into structured JSON, and then produces short, actionable insights. It includes an offline test mode (no network calls) and privacy-first handling (SSN/EIN masked; no file persistence).
+
+Table of contents
+
+Features
+
+Architecture & Flow
+
+Project Layout
+
+Installation
+
+Configuration
+
+Running
+
+Programmatic Use
+
+JSON Output Schema
+
+Privacy & Safety
+
+OCR & File Handling Details
+
+Gemini Integration
+
+Quality Notes & Heuristics
+
+Edge Cases
+
+Troubleshooting
+
+Limitations & Assumptions
+
+Prompts
+
+License
+
+Features
+
+W-2 ingestion: Accepts PDF or common image formats (e.g., JPG/PNG).
+
+Extraction via Gemini: Prompts Gemini to return a strict JSON object with all key W-2 fields.
+
+Insight generation via Gemini: Produces concise bullets on address sanity, withholding ratios, Social Security cap proximity, multi-state income, and consistency checks.
+
+Local validations: Numeric coercion, state code normalization, SS cap check (known years), ZIP format check, missing-box warnings.
+
+OCR (best effort): Optional pre-OCR via Tesseract (pytesseract) and pdf2image for scanned PDFs.
+
+Privacy-first: SSN/EIN always masked to last-4 in outputs, logs, and error messages; no file persistence.
+
+Offline test mode: Deterministic dummy data and insights; no network calls.
+
+Architecture & Flow
+
+Load file (PDF/image).
+
+Best-effort OCR (if libraries available) → rough text signal for Gemini.
+
+Extraction prompt → Gemini returns strict JSON of W-2 fields (employee, employer, federal boxes 1–14, state/local entries).
+
+Post-process
+
+Mask SSN/EIN to last-4
+
+Normalize state codes; coerce numeric fields; basic ZIP checks
+
+Collect warnings for missing/invalid boxes
+
+Local derived checks (no network):
+
+Withholding ratio sanity
+
+SS wage cap proximity (by tax year if detectable)
+
+Address formatting sanity
+
+Insight prompt → Gemini returns short, plain-string bullets.
+
+Return a single JSON object:
+
+{ "fields": {...}, "insights": ["..."], "quality": {"warnings": [...], ...} }
+
+Project Layout
+.
+├── w2_parser.py               # Module + CLI (process_w2 entrypoint)
+├── prompts/
+│   ├── extract_w2.txt         # Extraction prompt for Gemini
+│   └── insights_w2.txt        # Insights prompt for Gemini
+├── .env                       # Holds GEMINI_API_KEY (optional; see Configuration)
+└── README.md                  # This file
+
+Installation
+
+Python: 3.9–3.12 recommended.
+
+pip install python-dotenv pillow pytesseract pdf2image google-genai
+
+
+Tesseract OCR (for best results):
+
+Windows: Install Tesseract from the official installer, ensure tesseract.exe is on PATH.
+
+macOS: brew install tesseract
+
+Linux (Debian/Ubuntu): sudo apt-get install tesseract-ocr
+
+pdf2image requires Poppler for PDF → image conversion:
+
+macOS: brew install poppler
+
+Linux: sudo apt-get install poppler-utils
+
+Windows: Download Poppler binaries and add bin/ to PATH.
+
+The component runs without OCR libraries; it will simply skip pre-OCR and rely on Gemini’s vision capabilities if you keep online mode enabled.
+
+Configuration
+
+Create a .env in the project root:
+
+GEMINI_API_KEY=YOUR_REAL_KEY
+
+
+Security note: In w2_parser.py, _get_client() should use your environment variable. Remove any hard-coded keys before committing code.
+
+Running
+CLI
+# Online mode (uses Gemini extraction + insights)
+python w2_parser.py /path/to/W2.pdf
+
+# Online mode with an image
+python w2_parser.py /path/to/W2.jpg
+
+# Offline test mode (NO network calls)
+python w2_parser.py /path/to/anything.jpg --test
+
+
+Output is printed as pretty JSON to stdout.
+
+In test mode, the module returns deterministic dummy fields and dummy insights and still applies the same normalization and local checks.
+
+Programmatic Use
+from w2_parser import process_w2
+
+result = process_w2("/path/to/W2.pdf", test_mode=False)
+print(result["fields"])
+print(result["insights"])
+print(result["quality"])
+
+
+Signature
+
+process_w2(file_path: str, test_mode: bool = False) -> dict
+
+
+Return
+
+{
+  "fields": {...},        # normalized W-2 structure (see below)
+  "insights": ["..."],    # list of plain strings
+  "quality": {
+    "warnings": [...],    # parse/ocr/consistency warnings
+    "ocr_confidence": null,   # reserved (pytesseract simple API doesn’t expose)
+    "sent_to_gemini": bool    # whether the file was sent online
+  }
+}
+
+JSON Output Schema
+fields.employee
+{
+  "name": "John Doe",
+  "ssn": "*-**-1234",
+  "address": {
+    "street": "123 Main St",
+    "city": "Anytown",
+    "state": "CA",
+    "zip": "90001"
+  }
+}
+
+fields.employer
+{
+  "name": "DesignNext",
+  "ein": "*-**-8788",
+  "address": "Katham Dorbosto, Kashiani, Gopalgonj, AK 8133"
+}
+
+
+Employer address can be a single string if the source format is non-standard; normalization is intentionally light.
+
+fields.federal (Boxes 1–14 + extras if present)
+
+Common keys your code normalizes to floats where applicable:
+
+wages_tips_other_comp (Box 1)
+
+federal_income_tax_withheld (Box 2)
+
+social_security_wages (Box 3)
+
+social_security_tax_withheld (Box 4)
+
+medicare_wages_and_tips (Box 5)
+
+medicare_tax_withheld (Box 6)
+
+Tips, dependent care, nonqualified plans, etc., if present
+
+boxes_12: object with up to a–d, each { "code": "D", "amount": 1234.56 }
+
+box_13: checkbox flags if the extractor returns them
+
+other: { "14": ... } for Box 14 and other labeled entries
+
+Non-numeric values in numeric boxes are captured as warnings.
+
+fields.state (list)
+[
+  {
+    "state_code": "AL",
+    "employer_state_id": "877878878",
+    "state_wages": 80000.0,
+    "state_income_tax": 835.0
+  }
+]
+
+
+Multiple entries supported.
+
+State code normalization is lenient (keeps original but logs warnings for non-standard codes).
+
+fields.local (list)
+[
+  {
+    "locality_name": "COLUMBUS",
+    "local_wages": 52000.0,
+    "local_income_tax": 650.0
+  }
+]
+
+
+Multiple entries supported.
+
+Locality names trimmed; numeric coercion with warnings on failure.
+
+Privacy & Safety
+
+No persistence: Source bytes are read into memory and not saved to disk by this module.
+
+Masking:
+
+SSN → *-**-1234 (last-4 only)
+
+EIN → *-**-1234 (last-4 only)
+
+All error messages and any OCR side-text are passed through a masker before inclusion in outputs.
+
+Test mode: No network calls or file uploads.
+
+OCR & File Handling Details
+
+If pytesseract/Pillow are available:
+
+Images: OCR directly.
+
+PDFs: Converted to images via pdf2image (requires Poppler), then OCR per page.
+
+OCR text (if available) is optionally included alongside the file when calling Gemini to boost accuracy.
+
+Missing OCR dependencies are not fatal; the pipeline continues and logs a warning.
+
+Gemini Integration
+
+Library: google-genai (imported as from google import genai and from google.genai import types)
+
+Model: gemini-2.5-flash (configurable via DEFAULT_MODEL).
+
+Extraction:
+
+Sends the file bytes and (optionally) OCR text.
+
+Uses prompts/extract_w2.txt to instruct strict JSON output.
+
+JSON is cleaned of code fences, parsed, and minimally validated; SSN/EIN are masked again defensively.
+
+Insights:
+
+Sends the normalized fields JSON (as a string) plus prompts/insights_w2.txt.
+
+Accepts either a JSON array of strings or {"insights": [...]}; falls back to a single string if needed.
+
+Retries: A light retry (_retry_call) with a small delay.
+
+API key: Read from GEMINI_API_KEY via .env/environment.
+
+Important: Remove any hard-coded keys from _get_client() and rely solely on os.environ["GEMINI_API_KEY"].
+
+Quality Notes & Heuristics
+
+Returned under quality:
+
+warnings:
+
+Missing common federal boxes (1–6)
+
+Non-numeric values in numeric boxes
+
+Non-standard state codes
+
+ZIP format anomalies
+
+Withholding ratio anomalies (outside ~5–30%)
+
+Social Security wages near the wage base cap for the detected year
+
+OCR/PDF conversion failures (if dependencies missing or exceptions raised)
+
+ocr_confidence: Currently None (simple pytesseract API doesn’t expose per-page confidence here).
+
+sent_to_gemini: Whether online calls were attempted.
+
+Edge Cases
+
+Rotated/low-quality scans: OCR may struggle; Gemini may still extract from the raw file. Warnings are added.
+
+Multi-page W-2: All pages are OCR’d (when OCR is available) and concatenated for context.
+
+Duplicate labels: Model is instructed to consolidate, but post-processing favors normalized keys.
+
+Missing boxes: Returned as null with warnings; pipeline never fails solely due to missing boxes.
+
+Non-standard employer address: Kept as raw string if not safely segmentable.
+
+Troubleshooting
+
+Gemini client unavailable or GEMINI_API_KEY not set
+
+Ensure google-genai is installed and GEMINI_API_KEY is exported or present in .env.
+
+pdf2image not installed or Poppler not found
+
+Install pdf2image and Poppler; or run without OCR (the pipeline will continue with a warning).
+
+pytesseract / Pillow missing
+
+Install both for OCR; otherwise, proceed without OCR.
+
+Model returned non-JSON
+
+The cleaner attempts to salvage via brace-matching; if it still fails, you’ll see a “Gemini extraction error” in quality.warnings.
+
+Weird percentages or caps
+
+The component computes simple ratios on normalized floats; inspect quality.warnings to see which inputs were missing or non-numeric.
+
+Limitations & Assumptions
+
+SS wage base caps included only for 2021–2024 (SS_WAGE_BASE); later years default to “no cap check”.
+
+ZIP/state crosswalk is lightweight: validates ZIP formatting, not ZIP↔state mapping.
+
+Employer address may remain unstructured if the source is irregular.
+
+OCR confidence is not exposed by default pytesseract call chain.
+
+Prompts: The strictness of JSON output depends on the model and prompts; braces salvage is a last resort.
+
+Prompts
+
+Place these files under prompts/:
+
+extract_w2.txt:
+
+Instruct Gemini to output only JSON (no prose, no code fences).
+
+Include fields for employee, employer, federal, state (list), local (list).
+
+Require SSN/EIN to be masked to last-4.
+
+Accept unknown/missing values as null.
+
+Prefer canonical numeric keys:
+
+wages_tips_other_comp, federal_income_tax_withheld, social_security_wages, social_security_tax_withheld, medicare_wages_and_tips, medicare_tax_withheld, boxes_12, other (for Box 14 and misc).
+
+insights_w2.txt:
+
+Given the normalized JSON, return a JSON array of strings (or {"insights":[...]}).
+
+Address sanity (ZIP format), multi-state detection, withholding ratio commentary, SS cap proximity, consistency (Box 1 vs 3/5, tips present, Medicare>SS wages), and potential local tax follow-ups.
+
+For development, you can test with any W-2 image such as sample forms posted online (e.g., training examples). Never include unmasked PII in prompts or logs.
