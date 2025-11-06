@@ -24,10 +24,11 @@ def find_price_gap_pair(nums: list[int], k: int) -> Optional[Tuple[int, int]]:
             earliest[v] = j
 
     return best_pair
-ku=int(input())
+ku=int(input("enter the length of array"))
 nums = []
 for i in range(ku):
     yu=int(input())
     nums.append(yu)
 k = int(input())
 print(find_price_gap_pair(nums,k))
+
