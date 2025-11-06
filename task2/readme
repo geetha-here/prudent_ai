@@ -1,0 +1,150 @@
+# Price Gap Pair API + Movies API
+
+A small FastAPI service exposing two endpoints:
+
+1. **POST `/api/price-gap-pair`**  
+   Computes the lexicographically smallest pair `(i, j)` such that  
+   `abs(nums[i] - nums[j]) == k`.
+
+2. **GET `/api/movies`**  
+   Searches movies using the TMDB API and returns:  
+   - title  
+   - director  
+   - minimal pagination: page, total_pages, total_results  
+
+Director names are resolved using TMDB's Credits API.
+
+---
+
+## Requirements
+
+- Python 3.9+
+- FastAPI
+- Uvicorn
+- Requests
+- python-dotenv
+- TMDB API key
+
+Install dependencies:
+
+```
+pip install fastapi uvicorn requests python-dotenv
+```
+
+---
+
+## Environment Variables
+
+Create a `.env` file in the project root:
+
+```
+MOVIE_API_KEY=your_tmdb_api_key_here
+```
+
+The server will fail clearly if this variable is missing.
+
+---
+
+## How to Run
+
+1. Install dependencies:
+
+```
+pip install fastapi uvicorn requests python-dotenv
+```
+
+2. Start the server:
+
+```
+uvicorn app:app --reload
+```
+
+3. Open interactive Swagger docs:
+
+http://127.0.0.1:8000/docs
+
+---
+
+## Endpoints
+
+### POST /api/price-gap-pair
+
+**Request Body:**
+```json
+{
+  "nums": [4, 1, 6, 3, 8],
+  "k": 2
+}
+```
+
+**Response Example:**
+```json
+{
+  "i": 0,
+  "j": 2,
+  "value_i": 4,
+  "value_j": 6
+}
+```
+
+If no valid pair exists, the fields will be `null`.
+
+---
+
+### GET /api/movies?q=matrix&page=1
+
+**Response Example:**
+```json
+{
+  "results": [
+    { "title": "The Matrix", "director": "Lana Wachowski" }
+  ],
+  "total_results": 1,
+  "total_pages": 1,
+  "page": 1
+}
+```
+
+If `q` is missing or empty → the result set is empty.  
+If the upstream TMDB API fails → returns `502 Bad Gateway`.
+
+---
+
+## Tests
+
+Run:
+
+```
+pytest
+```
+
+Tests cover:
+
+- POST valid input  
+- Duplicate tie-break behavior  
+- POST invalid input  
+- GET empty query  
+- GET successful mapping (title + director)  
+- Upstream error → 502  
+
+---
+
+## Project Structure
+
+```
+app.py
+price_gap.py
+movies_client.py
+README.md
+tests/
+```
+
+---
+
+## Notes
+
+- Directors fetched using `/movie/{id}/credits`.
+- 1 retry + timeout for robustness.
+- `.env` variables loaded with `python-dotenv`.
+
+---
